@@ -23,7 +23,7 @@ A key feature of this version is the inclusion of a **software framebuffer**. Th
 
 ## Setup
 
-1.  **Library File:** Place the `GC9A01.py` (this library file, currently `gc9a01_alpha_blend_mod.py`) file on your device (e.g., Unihiker) in a directory where your main script can import it, or install it as a custom library.
+1.  **Library File:** Place the `GC9A01.py`  file on your device (e.g., Unihiker) in a directory where your main script can import it, or install it as a custom library.
 2.  **Dependencies:** Ensure PinPong and Pillow are installed in your Python environment.
 3.  **Font File:** For text rendering, you'll need a TrueType font file (e.g., `DejaVuSans-Bold.ttf`) accessible by your script.
 
