@@ -16,6 +16,7 @@ except ImportError:
 
 # Import from the cleaned library with software framebuffer support
 try:
+    # Ensure this matches the filename of your GC9A01 library
     from GC9A01 import GC9A01 
 except ImportError:
     print("Error: Could not import GC9A01 class from gc9a01_alpha_blend_mod.py.")
@@ -27,43 +28,31 @@ except ImportError:
         print("Warning: Imported GC9A01 globally. Ensure it's the version with software framebuffer.")
 
 
-def create_line_rgba_image(x0, y0, x1, y1, line_color_rgb888_alpha, line_width, abs_coords=True):
+def create_line_rgba_image(x0, y0, x1, y1, line_color_rgb888_alpha, line_width):
     """
     Creates a Pillow RGBA image containing just a single line.
-    x0,y0,x1,y1 are absolute screen coordinates if abs_coords is True.
-    Returns the RGBA image, and its top-left (x,y) position for drawing.
+    The line is drawn relative to the top-left of its own tight bounding box.
+    Returns the RGBA image, and its calculated top-left (x,y) position on the screen.
     """
     if not _HAS_PIL: return None, 0, 0
     x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
 
-    # Determine bounding box of the line
-    padding = (line_width // 2) + 2 # Padding for anti-aliasing
+    padding = (line_width // 2) + 2 
     
-    if abs_coords:
-        # Coordinates are absolute, calculate bounding box based on them
-        min_x_abs = min(x0, x1) - padding
-        min_y_abs = min(y0, y1) - padding
-        max_x_abs = max(x0, x1) + padding
-        max_y_abs = max(y0, y1) + padding
+    # Absolute screen coordinates for the bounding box of this line image
+    img_screen_x0 = min(x0, x1) - padding
+    img_screen_y0 = min(y0, y1) - padding
+    img_screen_x1 = max(x0, x1) + padding
+    img_screen_y1 = max(y0, y1) + padding
 
-        img_draw_x = min_x_abs # Top-left of the image relative to screen
-        img_draw_y = min_y_abs 
-        img_pil_width = max_x_abs - min_x_abs + 1
-        img_pil_height = max_y_abs - min_y_abs + 1
+    img_pil_width = img_screen_x1 - img_screen_x0 + 1
+    img_pil_height = img_screen_y1 - img_screen_y0 + 1
         
-        # Line coordinates relative to this new image
-        rel_x0 = x0 - img_draw_x
-        rel_y0 = y0 - img_draw_y
-        rel_x1 = x1 - img_draw_x
-        rel_y1 = y1 - img_draw_y
-    else:
-        # Coordinates are already relative to a 0,0 origin for the image
-        img_draw_x = 0 # This will be adjusted by the caller
-        img_draw_y = 0 # This will be adjusted by the caller
-        img_pil_width = max(x0,x1) + padding # Ensure width covers the line
-        img_pil_height = max(y0,y1) + padding # Ensure height covers the line
-        rel_x0, rel_y0, rel_x1, rel_y1 = x0, y0, x1, y1
-
+    # Line coordinates relative to this new image's top-left corner
+    rel_x0 = x0 - img_screen_x0
+    rel_y0 = y0 - img_screen_y0
+    rel_x1 = x1 - img_screen_x0
+    rel_y1 = y1 - img_screen_y0
 
     if img_pil_width <= 0 or img_pil_height <= 0: return None, 0, 0
 
@@ -71,7 +60,7 @@ def create_line_rgba_image(x0, y0, x1, y1, line_color_rgb888_alpha, line_width, 
     draw_context = ImageDraw.Draw(line_img)
     draw_context.line([(rel_x0, rel_y0), (rel_x1, rel_y1)], fill=line_color_rgb888_alpha, width=line_width)
     
-    return line_img, img_draw_x, img_draw_y
+    return line_img, img_screen_x0, img_screen_y0
 
 
 # --- Main Cat Drawing Program ---
@@ -124,7 +113,7 @@ if __name__ == "__main__":
     COLOR_PINK_RGB = (255, 192, 203)       # Nose
     COLOR_GREEN_RGB = (0, 200, 0)          # Eyes sclera
     COLOR_BLACK_RGB = (0, 0, 0)            # Pupils, eye outlines
-    OPAQUE_ALPHA = (255,) # For RGBA colors
+    OPAQUE_ALPHA_TUPLE = (255,) # For RGBA colors (R,G,B,A)
 
     # Convert screen background to RGB565 for initial fill_screen
     SCREEN_BG_565 = display._rgb888_tuple_to_rgb565_int(COLOR_SKY_BLUE_RGB)
@@ -145,8 +134,7 @@ if __name__ == "__main__":
     body_x = head_center_x - body_width // 2
     body_y = head_center_y + head_radius - 15 # Top of body Y, slight overlap with head
 
-    # 2. Tail (Drawn BEFORE Body)
-    # Create RGBA images for tail segments and composite them.
+    # 2. Tail (Drawn BEFORE Body, composited onto sky blue)
     tail_start_x = body_x + body_width -5 
     tail_start_y = body_y + body_height * 0.6 
     tail_mid_x = tail_start_x + 35
@@ -156,17 +144,13 @@ if __name__ == "__main__":
     tail_body_width = 6
     tail_outline_width = tail_body_width + 4 
     
-    # Tail Segment 1 - Outline
-    line_img, lx, ly = create_line_rgba_image(tail_start_x, tail_start_y, tail_mid_x, tail_mid_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA, tail_outline_width)
+    line_img, lx, ly = create_line_rgba_image(tail_start_x, tail_start_y, tail_mid_x, tail_mid_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA_TUPLE, tail_outline_width)
     if line_img: display.draw_image_rgba_composited(lx, ly, line_img)
-    # Tail Segment 1 - Fill
-    line_img, lx, ly = create_line_rgba_image(tail_start_x, tail_start_y, tail_mid_x, tail_mid_y, COLOR_LIGHT_GRAY_RGB + OPAQUE_ALPHA, tail_body_width)
+    line_img, lx, ly = create_line_rgba_image(tail_start_x, tail_start_y, tail_mid_x, tail_mid_y, COLOR_LIGHT_GRAY_RGB + OPAQUE_ALPHA_TUPLE, tail_body_width)
     if line_img: display.draw_image_rgba_composited(lx, ly, line_img)
-    # Tail Segment 2 - Outline
-    line_img, lx, ly = create_line_rgba_image(tail_mid_x, tail_mid_y, tail_end_x, tail_end_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA, tail_outline_width - 2)
+    line_img, lx, ly = create_line_rgba_image(tail_mid_x, tail_mid_y, tail_end_x, tail_end_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA_TUPLE, tail_outline_width - 2)
     if line_img: display.draw_image_rgba_composited(lx, ly, line_img)
-    # Tail Segment 2 - Fill
-    line_img, lx, ly = create_line_rgba_image(tail_mid_x, tail_mid_y, tail_end_x, tail_end_y, COLOR_LIGHT_GRAY_RGB + OPAQUE_ALPHA, tail_body_width - 2)
+    line_img, lx, ly = create_line_rgba_image(tail_mid_x, tail_mid_y, tail_end_x, tail_end_y, COLOR_LIGHT_GRAY_RGB + OPAQUE_ALPHA_TUPLE, tail_body_width - 2)
     if line_img: display.draw_image_rgba_composited(lx, ly, line_img)
 
     # 3. Body & Legs (Opaque, drawn using standard library methods)
@@ -185,19 +169,15 @@ if __name__ == "__main__":
 
     # 4. Head (Opaque, drawn using standard library method. Will overlap body top.)
     display.circle(head_center_x, head_center_y, head_radius,
-                   fill_rgb565=body_fill_565, # Same color as body for fill
+                   fill_rgb565=body_fill_565, 
                    outline_rgb565=body_outline_565, 
                    outline_width=2) 
 
-    # 5. Ears (Drawn AFTER Head, as RGBA images composited onto the head/sky)
+    # 5. Ears (Drawn AFTER Head, as RGBA images composited)
     ear_line_width = 2
-    # --- EAR Y-COORDINATE ADJUSTMENT ---
-    # Original: tip_y_factor = 0.9, outer_base_y_factor = 0.3, inner_base_y_factor = 0.15
-    # Moved up:
-    tip_y_factor = 1.1  # Further from head_center_y (higher up)
-    outer_base_y_factor = 0.6 # Further from head_center_y
-    inner_base_y_factor = 0.45 # Further from head_center_y
-
+    tip_y_factor = 1.1  
+    outer_base_y_factor = 0.6 
+    inner_base_y_factor = 0.45 
     # Left Ear
     ear_left_tip_x = head_center_x - head_radius * 0.5
     ear_left_tip_y = head_center_y - head_radius * tip_y_factor 
@@ -205,14 +185,12 @@ if __name__ == "__main__":
     ear_left_base_outer_y = head_center_y - head_radius * outer_base_y_factor
     ear_left_base_inner_x = head_center_x - head_radius * 0.2 
     ear_left_base_inner_y = head_center_y - head_radius * inner_base_y_factor
-    
-    line_img, lx, ly = create_line_rgba_image(ear_left_tip_x, ear_left_tip_y, ear_left_base_outer_x, ear_left_base_outer_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA, ear_line_width)
+    line_img, lx, ly = create_line_rgba_image(ear_left_tip_x, ear_left_tip_y, ear_left_base_outer_x, ear_left_base_outer_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA_TUPLE, ear_line_width)
     if line_img: display.draw_image_rgba_composited(lx, ly, line_img)
-    line_img, lx, ly = create_line_rgba_image(ear_left_tip_x, ear_left_tip_y, ear_left_base_inner_x, ear_left_base_inner_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA, ear_line_width)
+    line_img, lx, ly = create_line_rgba_image(ear_left_tip_x, ear_left_tip_y, ear_left_base_inner_x, ear_left_base_inner_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA_TUPLE, ear_line_width)
     if line_img: display.draw_image_rgba_composited(lx, ly, line_img)
-    line_img, lx, ly = create_line_rgba_image(ear_left_base_outer_x, ear_left_base_outer_y, ear_left_base_inner_x, ear_left_base_inner_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA, ear_line_width)
+    line_img, lx, ly = create_line_rgba_image(ear_left_base_outer_x, ear_left_base_outer_y, ear_left_base_inner_x, ear_left_base_inner_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA_TUPLE, ear_line_width)
     if line_img: display.draw_image_rgba_composited(lx, ly, line_img)
-
     # Right Ear
     ear_right_tip_x = head_center_x + head_radius * 0.5
     ear_right_tip_y = head_center_y - head_radius * tip_y_factor
@@ -220,56 +198,41 @@ if __name__ == "__main__":
     ear_right_base_outer_y = head_center_y - head_radius * outer_base_y_factor
     ear_right_base_inner_x = head_center_x + head_radius * 0.2 
     ear_right_base_inner_y = head_center_y - head_radius * inner_base_y_factor
-    line_img, lx, ly = create_line_rgba_image(ear_right_tip_x, ear_right_tip_y, ear_right_base_outer_x, ear_right_base_outer_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA, ear_line_width)
+    line_img, lx, ly = create_line_rgba_image(ear_right_tip_x, ear_right_tip_y, ear_right_base_outer_x, ear_right_base_outer_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA_TUPLE, ear_line_width)
     if line_img: display.draw_image_rgba_composited(lx, ly, line_img)
-    line_img, lx, ly = create_line_rgba_image(ear_right_tip_x, ear_right_tip_y, ear_right_base_inner_x, ear_right_base_inner_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA, ear_line_width)
+    line_img, lx, ly = create_line_rgba_image(ear_right_tip_x, ear_right_tip_y, ear_right_base_inner_x, ear_right_base_inner_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA_TUPLE, ear_line_width)
     if line_img: display.draw_image_rgba_composited(lx, ly, line_img)
-    line_img, lx, ly = create_line_rgba_image(ear_right_base_outer_x, ear_right_base_outer_y, ear_right_base_inner_x, ear_right_base_inner_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA, ear_line_width)
+    line_img, lx, ly = create_line_rgba_image(ear_right_base_outer_x, ear_right_base_outer_y, ear_right_base_inner_x, ear_right_base_inner_y, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA_TUPLE, ear_line_width)
     if line_img: display.draw_image_rgba_composited(lx, ly, line_img)
 
     # 6. Eyes (Opaque, drawn using standard library method on the head)
-    eye_radius = 10
-    eye_offset_x = 20
-    eye_offset_y = -8 
-    pupil_radius = 4
+    eye_radius = 10; eye_offset_x = 20; eye_offset_y = -8; pupil_radius = 4
     eye_sclera_565 = display._rgb888_tuple_to_rgb565_int(COLOR_GREEN_RGB)
     eye_outline_565 = display._rgb888_tuple_to_rgb565_int(COLOR_BLACK_RGB)
     pupil_fill_565 = display._rgb888_tuple_to_rgb565_int(COLOR_BLACK_RGB)
-
-    display.circle(head_center_x - eye_offset_x, head_center_y + eye_offset_y, eye_radius, 
-                   fill_rgb565=eye_sclera_565, outline_rgb565=eye_outline_565, outline_width=1) 
-    display.circle(head_center_x - eye_offset_x, head_center_y + eye_offset_y, pupil_radius, 
-                   fill_rgb565=pupil_fill_565)    
-    display.circle(head_center_x + eye_offset_x, head_center_y + eye_offset_y, eye_radius, 
-                   fill_rgb565=eye_sclera_565, outline_rgb565=eye_outline_565, outline_width=1) 
-    display.circle(head_center_x + eye_offset_x, head_center_y + eye_offset_y, pupil_radius, 
-                   fill_rgb565=pupil_fill_565)    
+    display.circle(head_center_x - eye_offset_x, head_center_y + eye_offset_y, eye_radius, fill_rgb565=eye_sclera_565, outline_rgb565=eye_outline_565, outline_width=1) 
+    display.circle(head_center_x - eye_offset_x, head_center_y + eye_offset_y, pupil_radius, fill_rgb565=pupil_fill_565)    
+    display.circle(head_center_x + eye_offset_x, head_center_y + eye_offset_y, eye_radius, fill_rgb565=eye_sclera_565, outline_rgb565=eye_outline_565, outline_width=1) 
+    display.circle(head_center_x + eye_offset_x, head_center_y + eye_offset_y, pupil_radius, fill_rgb565=pupil_fill_565)    
 
     # 7. Nose (Opaque, drawn using standard library method on the head)
-    nose_radius = 6
-    nose_y_offset = head_radius * 0.35
+    nose_radius = 6; nose_y_offset = head_radius * 0.35
     nose_fill_565 = display._rgb888_tuple_to_rgb565_int(COLOR_PINK_RGB)
     nose_outline_565 = display._rgb888_tuple_to_rgb565_int(COLOR_DARK_GRAY_RGB)
-    display.circle(head_center_x, head_center_y + nose_y_offset, nose_radius, 
-                   fill_rgb565=nose_fill_565, outline_rgb565=nose_outline_565, outline_width=1) 
+    display.circle(head_center_x, head_center_y + nose_y_offset, nose_radius, fill_rgb565=nose_fill_565, outline_rgb565=nose_outline_565, outline_width=1) 
         
     # 8. Mouth (Drawn as RGBA images composited onto the head)
     mouth_y_base = head_center_y + nose_y_offset + nose_radius + 1
-    mouth_width_half = 10
-    mouth_depth = 6
-    mouth_line_width = 2
-    line_img, lx, ly = create_line_rgba_image(head_center_x, mouth_y_base, head_center_x - mouth_width_half, mouth_y_base + mouth_depth, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA, mouth_line_width)
+    mouth_width_half = 10; mouth_depth = 6; mouth_line_width = 2
+    line_img, lx, ly = create_line_rgba_image(head_center_x, mouth_y_base, head_center_x - mouth_width_half, mouth_y_base + mouth_depth, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA_TUPLE, mouth_line_width)
     if line_img: display.draw_image_rgba_composited(lx, ly, line_img)
-    line_img, lx, ly = create_line_rgba_image(head_center_x, mouth_y_base, head_center_x + mouth_width_half, mouth_y_base + mouth_depth, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA, mouth_line_width)
+    line_img, lx, ly = create_line_rgba_image(head_center_x, mouth_y_base, head_center_x + mouth_width_half, mouth_y_base + mouth_depth, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA_TUPLE, mouth_line_width)
     if line_img: display.draw_image_rgba_composited(lx, ly, line_img)
 
     # 9. Whiskers (Drawn as RGBA images composited onto the head)
-    whisker_len = 30
-    whisker_y_start_offset = head_radius * 0.25 
-    whisker_x_start_offset = head_radius * 0.85 
-    whisker_line_width = 1
+    whisker_len = 30; whisker_y_start_offset = head_radius * 0.25 
+    whisker_x_start_offset = head_radius * 0.85; whisker_line_width = 1
     whisker_base_y_abs = head_center_y + whisker_y_start_offset
-
     wh_coords = [
         (head_center_x - whisker_x_start_offset, whisker_base_y_abs - 8, head_center_x - whisker_x_start_offset - whisker_len, whisker_base_y_abs - 12),
         (head_center_x - whisker_x_start_offset, whisker_base_y_abs,     head_center_x - whisker_x_start_offset - whisker_len, whisker_base_y_abs),
@@ -279,7 +242,7 @@ if __name__ == "__main__":
         (head_center_x + whisker_x_start_offset, whisker_base_y_abs + 8, head_center_x + whisker_x_start_offset + whisker_len, whisker_base_y_abs + 12)
     ]
     for x0,y0,x1,y1 in wh_coords:
-        line_img, lx, ly = create_line_rgba_image(x0,y0,x1,y1, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA, whisker_line_width)
+        line_img, lx, ly = create_line_rgba_image(x0,y0,x1,y1, COLOR_DARK_GRAY_RGB + OPAQUE_ALPHA_TUPLE, whisker_line_width)
         if line_img: display.draw_image_rgba_composited(lx, ly, line_img)
                       
     print("Cat drawing complete!")
