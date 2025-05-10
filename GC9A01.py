@@ -4,7 +4,7 @@
 # with a Unihiker board using PinPong for GPIO and SPI communication.
 #
 # Features:
-# - Standard drawing methods (pixels, lines, shapes, text).
+# - Standard drawing methods (pixels, lines, rectangles, circles, ovals, arcs, text).
 # - Software Framebuffer: Maintains an in-memory mirror of the display
 #   to enable advanced compositing effects like alpha blending.
 # - Alpha Blending: Supports drawing RGBA images with transparency,
@@ -124,6 +124,7 @@ class GC9A01:
     def init_display(self):
         self.reset()
         time.sleep(0.100) 
+        # (Full init sequence from previous "clean" version)
         self._write_cmd_no_args(0xEF); self._write_cmd_single_arg(0xEB, 0x14)
         self._write_cmd_no_args(CMD_INTER_REGISTER_ENABLE_1); self._write_cmd_no_args(CMD_INTER_REGISTER_ENABLE_2)
         self._write_cmd_single_arg(0xEB, 0x14); self._write_cmd_single_arg(0x84, 0x40) 
@@ -179,7 +180,6 @@ class GC9A01:
         """Helper to update a region of the physical display from the software framebuffer."""
         if not self.framebuffer or not _HAS_PIL: return
         x, y, width, height = int(x), int(y), int(width), int(height)
-        # Ensure region is within bounds
         x = max(0, min(x, self.width -1))
         y = max(0, min(y, self.height -1))
         width = max(0, min(width, self.width - x))
@@ -201,11 +201,7 @@ class GC9A01:
         x_int, y_int = int(x), int(y)
         if pil_image_rgb.mode != "RGB":
             pil_image_rgb = pil_image_rgb.convert("RGB")
-        
-        # Paste onto software framebuffer (Pillow handles clipping for paste if image is larger)
         self.framebuffer.paste(pil_image_rgb, (x_int, y_int))
-        
-        # Update the corresponding region on the physical display
         self._update_framebuffer_region(x_int, y_int, pil_image_rgb.width, pil_image_rgb.height)
 
     def draw_image_rgba_composited(self, x, y, pil_image_rgba):
@@ -215,7 +211,7 @@ class GC9A01:
         """
         if not _HAS_PIL or not self.framebuffer:
             print("Error: Pillow or framebuffer not available for RGBA compositing.")
-            if _HAS_PIL and pil_image_rgba: # Fallback if framebuffer is somehow None
+            if _HAS_PIL and pil_image_rgba: 
                 rgb_buffer = self._pil_image_to_rgb565_bytearray(pil_image_rgba) 
                 self.draw_image_rgb565(int(x), int(y), pil_image_rgba.width, pil_image_rgba.height, rgb_buffer)
             return
@@ -226,38 +222,26 @@ class GC9A01:
         img_width, img_height = pil_image_rgba.size
         x_int, y_int = int(x), int(y)
 
-        # Determine the actual drawing area on the screen (clipped)
-        draw_x_on_screen = max(0, x_int)
-        draw_y_on_screen = max(0, y_int)
-        
-        # Determine what part of the source RGBA image to use
+        draw_x_on_screen = max(0, x_int); draw_y_on_screen = max(0, y_int)
         src_crop_x0 = 0 if x_int >= 0 else -x_int
         src_crop_y0 = 0 if y_int >= 0 else -y_int
-        
         blit_width = min(img_width - src_crop_x0, self.width - draw_x_on_screen)
         blit_height = min(img_height - src_crop_y0, self.height - draw_y_on_screen)
-
         if blit_width <= 0 or blit_height <= 0: return 
 
         fg_cropped_rgba = pil_image_rgba.crop((src_crop_x0, src_crop_y0, src_crop_x0 + blit_width, src_crop_y0 + blit_height))
-        
-        # Get background region from software framebuffer
         bg_region_rgb = self.framebuffer.crop((draw_x_on_screen, draw_y_on_screen, draw_x_on_screen + blit_width, draw_y_on_screen + blit_height))
-        bg_region_rgba = bg_region_rgb.convert("RGBA") # Convert to RGBA for alpha_composite
+        bg_region_rgba = bg_region_rgb.convert("RGBA") 
 
-        # Composite
         composited_region_rgba = Image.alpha_composite(bg_region_rgba, fg_cropped_rgba)
-        composited_region_rgb = composited_region_rgba.convert("RGB") # Back to RGB
+        composited_region_rgb = composited_region_rgba.convert("RGB") 
 
-        # Update software framebuffer
         self.framebuffer.paste(composited_region_rgb, (draw_x_on_screen, draw_y_on_screen))
-        
-        # Update physical display with this composited region
         self._update_framebuffer_region(draw_x_on_screen, draw_y_on_screen, blit_width, blit_height)
 
     def draw_image_rgb565(self, x, y, width, height, image_buffer_bytes):
         """Low-level: Draws raw RGB565 buffer to hardware. DOES NOT update software framebuffer."""
-        x_int, y_int = int(x), int(y) # Ensure integer coords
+        x_int, y_int = int(x), int(y) 
         if x_int >= self.width or y_int >= self.height or x_int + width <= 0 or y_int + height <= 0: return
         src_x_offset = 0; src_y_offset = 0
         if x_int < 0: src_x_offset = -x_int
@@ -295,17 +279,14 @@ class GC9A01:
         if not _HAS_PIL or not self.framebuffer: return
         x0i,y0i,x1i,y1i = int(x0),int(y0),int(x1),int(y1)
         pil_color_rgb888 = self._rgb565_to_rgb888_tuple(color_rgb565)
+        
         self.fb_draw.line([(x0i,y0i),(x1i,y1i)], fill=pil_color_rgb888, width=line_width)
         
-        # Determine bounding box of the line for update
         padding = (line_width // 2) + 1 
         min_x = min(x0i, x1i) - padding; max_x = max(x0i, x1i) + padding
         min_y = min(y0i, y1i) - padding; max_y = max(y0i, y1i) + padding
         
-        update_x = max(0, min_x); update_y = max(0, min_y)
-        update_w = min(max_x, self.width-1) - update_x + 1
-        update_h = min(max_y, self.height-1) - update_y + 1
-        self._update_framebuffer_region(update_x, update_y, update_w, update_h)
+        self._update_framebuffer_region(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
 
     def rectangle(self, x, y, width, height, outline_rgb565=None, fill_rgb565=None, outline_width=1):
         if not _HAS_PIL or not self.framebuffer: return
@@ -320,7 +301,6 @@ class GC9A01:
                                outline=pil_outline_rgb888, 
                                width=outline_width if pil_outline_rgb888 and outline_width > 0 else 0)
         
-        # Determine bounding box for update
         padding = (outline_width // 2) + 1 if pil_outline_rgb888 and outline_width > 0 else 0
         self._update_framebuffer_region(x_int - padding, y_int - padding, w_int + 2*padding, h_int + 2*padding)
 
@@ -350,6 +330,100 @@ class GC9A01:
         padding = (outline_width // 2) + 1 if pil_outline_rgb888 and outline_width > 0 else 1
         self._update_framebuffer_region(x_c-r-padding, y_c-r-padding, 2*(r+padding), 2*(r+padding))
 
+    def oval(self, xy_bbox, outline_rgb565=None, fill_rgb565=None, outline_width=1):
+        """
+        Draws an oval (ellipse) defined by a bounding box.
+        Args:
+            xy_bbox: List or tuple [x0, y0, x1, y1] defining the bounding box.
+            outline_rgb565: Color of the outline (RGB565).
+            fill_rgb565: Color for the fill (RGB565).
+            outline_width: Width of the outline.
+        """
+        if not _HAS_PIL or not self.framebuffer:
+            print("Error: Pillow or framebuffer not available for oval().")
+            return
+        
+        x0, y0, x1, y1 = int(xy_bbox[0]), int(xy_bbox[1]), int(xy_bbox[2]), int(xy_bbox[3])
+        
+        # Ensure x0 <= x1 and y0 <= y1 for Pillow
+        if x0 > x1: x0, x1 = x1, x0
+        if y0 > y1: y0, y1 = y1, y0
+
+        pil_fill_rgb888 = self._rgb565_to_rgb888_tuple(fill_rgb565) if fill_rgb565 is not None else None
+        pil_outline_rgb888 = self._rgb565_to_rgb888_tuple(outline_rgb565) if outline_rgb565 is not None else None
+
+        # Draw on software framebuffer
+        self.fb_draw.ellipse([(x0,y0),(x1,y1)], 
+                             fill=pil_fill_rgb888, 
+                             outline=pil_outline_rgb888, 
+                             width=outline_width if pil_outline_rgb888 and outline_width > 0 else 0)
+        
+        # Determine bounding box for update (the xy_bbox itself plus padding for outline)
+        padding = (outline_width // 2) + 1 if pil_outline_rgb888 and outline_width > 0 else 1
+        update_x = x0 - padding
+        update_y = y0 - padding
+        update_width = (x1 - x0 + 1) + 2 * padding
+        update_height = (y1 - y0 + 1) + 2 * padding
+        
+        self._update_framebuffer_region(update_x, update_y, update_width, update_height)
+
+
+    def arc(self, xy_bbox, start_angle, end_angle, color_rgb565, width=1):
+        """
+        Draws an arc (a portion of an ellipse's outline).
+        The arc is drawn as an RGBA image and composited onto the framebuffer
+        for correct anti-aliasing.
+        Args:
+            xy_bbox: List or tuple [x0, y0, x1, y1] defining the bounding box
+                     of the ellipse from which the arc is taken.
+            start_angle: Starting angle in degrees (0 is 3 o'clock, counter-clockwise).
+            end_angle: Ending angle in degrees.
+            color_rgb565: Color of the arc line (RGB565 format).
+            width: Width of the arc line in pixels.
+        """
+        if not _HAS_PIL or not self.framebuffer:
+            print("Error: Pillow or framebuffer not available for arc().")
+            return
+        
+        x0_abs, y0_abs, x1_abs, y1_abs = int(xy_bbox[0]), int(xy_bbox[1]), int(xy_bbox[2]), int(xy_bbox[3])
+        pil_color_rgb888 = self._rgb565_to_rgb888_tuple(color_rgb565)
+        if pil_color_rgb888 is None: return
+
+        # Ensure x0 <= x1 and y0 <= y1 for Pillow bounding box
+        if x0_abs > x1_abs: x0_abs, x1_abs = x1_abs, x0_abs
+        if y0_abs > y1_abs: y0_abs, y1_abs = y1_abs, y0_abs
+
+        padding = (width // 2) + 2 
+        
+        # Bounding box for the temporary RGBA image that will contain the arc
+        # This bbox is in absolute screen coordinates
+        img_bbox_x0 = x0_abs - padding
+        img_bbox_y0 = y0_abs - padding
+        img_bbox_x1 = x1_abs + padding
+        img_bbox_y1 = y1_abs + padding
+
+        img_pil_width = img_bbox_x1 - img_bbox_x0 + 1
+        img_pil_height = img_bbox_y1 - img_bbox_y0 + 1
+
+        if img_pil_width <= 0 or img_pil_height <= 0: return
+
+        arc_rgba_img = Image.new("RGBA", (img_pil_width, img_pil_height), (0,0,0,0))
+        arc_draw_ctx = ImageDraw.Draw(arc_rgba_img)
+
+        # The arc's original bounding box (xy_bbox) needs to be relative to arc_rgba_img
+        arc_rel_x0 = x0_abs - img_bbox_x0
+        arc_rel_y0 = y0_abs - img_bbox_y0
+        arc_rel_x1 = x1_abs - img_bbox_x0 # This becomes arc_rel_x0 + (x1_abs - x0_abs)
+        arc_rel_y1 = y1_abs - img_bbox_y0 # This becomes arc_rel_y0 + (y1_abs - y0_abs)
+        
+        arc_draw_ctx.arc([(arc_rel_x0, arc_rel_y0), (arc_rel_x1, arc_rel_y1)],
+                         start_angle, end_angle, 
+                         fill=pil_color_rgb888 + (255,), 
+                         width=width)
+        
+        self.draw_image_rgba_composited(img_bbox_x0, img_bbox_y0, arc_rgba_img)
+
+
     def text(self, x, y, text_string, font_path, font_size, text_color_rgb888, background_color_rgb888=None):
         if not _HAS_PIL or not self.framebuffer: print("Error: Pillow or framebuffer not available."); return
         x_int, y_int = int(x), int(y)
@@ -357,31 +431,24 @@ class GC9A01:
         except IOError: print(f"Error: Font '{font_path}' not found."); return
         except Exception as e: print(f"Error loading font: {e}"); return
 
-        # Get text dimensions using a temporary draw object for accuracy
-        temp_draw = ImageDraw.Draw(Image.new("RGB",(1,1))) # Minimal temp image
+        temp_draw = ImageDraw.Draw(Image.new("RGB",(1,1))) 
         try:
-            if hasattr(temp_draw, 'textbbox') and hasattr(font, 'getbbox'): # Preferable for modern Pillow
-                 # anchor='lt' means x,y is top-left of the ink bounding box
-                 bbox = temp_draw.textbbox((0,0),text_string,font=font,anchor="lt") 
-                 txt_w,txt_h = bbox[2]-bbox[0], bbox[3]-bbox[1]
-            else: # Fallback for older Pillow
+            if hasattr(temp_draw, 'textbbox') and hasattr(font, 'getbbox'):
+                 bbox_local = temp_draw.textbbox((0,0),text_string,font=font,anchor="lt")
+                 txt_w,txt_h = bbox_local[2]-bbox_local[0], bbox_local[3]-bbox_local[1]
+            else: 
                 txt_w,txt_h = temp_draw.textsize(text_string,font=font)
         except Exception as e: print(f"Error getting text dimensions: {e}"); return
         if txt_w<=0 or txt_h<=0: return
         
-        # If background is specified, draw it first on the framebuffer
         if background_color_rgb888:
             self.fb_draw.rectangle([(x_int, y_int), (x_int+txt_w-1, y_int+txt_h-1)], fill=background_color_rgb888)
         
-        # Draw text onto software framebuffer
-        # Pillow's text drawing will anti-alias against what's already in self.framebuffer
-        # (or the background_color_rgb888 if we drew it above)
         if hasattr(self.fb_draw, 'textbbox') and hasattr(font, 'getbbox'):
             self.fb_draw.text((x_int,y_int), text_string, font=font, fill=text_color_rgb888, anchor="lt")
         else:
             self.fb_draw.text((x_int,y_int), text_string, font=font, fill=text_color_rgb888)
             
-        # Update the region on the physical display
         self._update_framebuffer_region(x_int, y_int, txt_w, txt_h)
 
 
@@ -404,58 +471,61 @@ if __name__ == "__main__":
         try:
             cs_pin = Pin(CS_PIN_NUM); dc_pin = Pin(DC_PIN_NUM, Pin.OUT); rst_pin = Pin(RST_PIN_NUM, Pin.OUT)
             bl_pin_obj = Pin(BL_PIN_NUM, Pin.OUT) if BL_PIN_NUM is not None else None
-            # For Unihiker, SPI constructor cs parameter expects a Pin object.
             spi_bus = SPI(1, cs=cs_pin, baudrate=40000000, polarity=0, phase=0) 
             
             display = GC9A01(spi_bus=spi_bus, dc_pin_obj=dc_pin, rst_pin_obj=rst_pin, 
-                             cs_pin_obj=None, # Set to None as SPI class handles CS via its cs_pin parameter
+                             cs_pin_obj=None, 
                              bl_pin_obj=bl_pin_obj, madctl_val=MADCTL_VALUE_TO_USE)
             display.init_display() 
             print("Display initialized.")
 
-            # 1. Fill screen with a base color
-            screen_bg_color_rgb = (0, 50, 100) # Dark Teal
+            screen_bg_color_rgb = (0, 50, 100) 
             screen_bg_color_565 = display._rgb888_tuple_to_rgb565_int(screen_bg_color_rgb)
             display.fill_screen(screen_bg_color_565) 
             print(f"Screen filled with RGB: {screen_bg_color_rgb}")
             time.sleep(0.5)
 
-            # 2. Draw some opaque shapes using standard methods (will update SW FB and HW)
             display.fill_rect(10,10, 50, 50, display._rgb888_tuple_to_rgb565_int((200,0,0))) 
             display.line(5, 70, 235, 70, display._rgb888_tuple_to_rgb565_int((255,255,255)), 3) 
             time.sleep(0.5)
 
-            # 3. Create a semi-transparent RGBA Pillow image
             circle_img_rgba = Image.new("RGBA", (100, 100), (0,0,0,0)) 
             draw_circle = ImageDraw.Draw(circle_img_rgba)
             draw_circle.ellipse([(5,5), (95,95)], fill=(0, 255, 0, 128), outline=(255,255,0,200), width=4) 
-
-            # 4. Draw it using the new alpha compositing method
-            print("Drawing semi-transparent green circle (composited with SW framebuffer)...")
+            print("Drawing semi-transparent green circle...")
             display.draw_image_rgba_composited(70, 40, circle_img_rgba) 
             time.sleep(1)
 
-            # 5. Draw another semi-transparent shape overlapping the first
             rect_img_rgba = Image.new("RGBA", (120, 60), (255, 0, 255, 150)) 
-            try:
-                font_for_rect = ImageFont.truetype(FONT_PATH, 15)
-            except IOError:
-                font_for_rect = ImageFont.load_default() # Fallback font
-            ImageDraw.Draw(rect_img_rgba).text((5,5), "Alpha!", font=font_for_rect, fill=(255,255,255,255)) # Opaque white text on magenta
-
-            print("Drawing semi-transparent magenta rectangle (composited with SW framebuffer)...")
+            try: font_for_rect = ImageFont.truetype(FONT_PATH, 15)
+            except IOError: font_for_rect = ImageFont.load_default()
+            ImageDraw.Draw(rect_img_rgba).text((5,5), "Alpha!", font=font_for_rect, fill=(255,255,255,255))
+            print("Drawing semi-transparent magenta rectangle...")
             display.draw_image_rgba_composited(30, 100, rect_img_rgba)
             time.sleep(1)
+            
+            arc_bbox = [10, 130, 100, 220] 
+            arc_color_565 = display._rgb888_tuple_to_rgb565_int((255, 165, 0)) # Orange
+            print("Drawing an orange arc...")
+            display.arc(arc_bbox, 45, 270, arc_color_565, width=5)
+            time.sleep(0.5)
 
-            # 6. Text with specific background (not using alpha compositing for this one, but drawn on FB)
+            # Example of drawing an oval
+            oval_bbox = [120, 140, 220, 200] # x0, y0, x1, y1
+            oval_fill_565 = display._rgb888_tuple_to_rgb565_int((128,0,128)) # Purple
+            oval_outline_565 = display._rgb888_tuple_to_rgb565_int((255,255,0)) # Yellow
+            print("Drawing a purple oval with yellow outline...")
+            display.oval(oval_bbox, fill_rgb565=oval_fill_565, outline_rgb565=oval_outline_565, outline_width=3)
+            time.sleep(0.5)
+
+
             actual_font_path = FONT_PATH
-            if not os.path.exists(FONT_PATH): # Simple check
+            if not os.path.exists(FONT_PATH):
                 font_paths_to_try = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]
                 actual_font_path = next((fp for fp in font_paths_to_try if os.path.exists(fp)), None)
-            
             if actual_font_path:
-                display.text(10, 180, "Opaque BG Text", actual_font_path, 20, (255,255,0), (50,50,50)) # Yellow on Gray
-            else: print(f"Font for text example not found. Searched '{FONT_PATH}' and fallbacks."); 
+                display.text(10, 210, "Shapes Test", actual_font_path, 20, (255,255,255), (0,0,0)) 
+            else: print(f"Font for text example not found."); 
             
             print("Example finished. Check the display.")
 
@@ -469,4 +539,6 @@ if __name__ == "__main__":
             
     elif not _HAS_PIL: print("Pillow library not found.")
     elif not board_initialized: print("Board not initialized.")
+
+
 
