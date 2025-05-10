@@ -7,7 +7,7 @@ A key feature of this version is the inclusion of a **software framebuffer**. Th
 ## Features
 
 * Initialization and control of GC9A01 displays.
-* Drawing primitives: pixels, lines, rectangles (filled/outline), circles (filled/outline).
+* Drawing primitives: pixels, lines, rectangles (filled/outline), circles (filled/outline), ovals (filled/outline), and arcs.
 * Text rendering with TrueType fonts.
 * Displaying Pillow (PIL) Image objects.
 * Software framebuffer for advanced 2D graphics operations.
@@ -23,7 +23,7 @@ A key feature of this version is the inclusion of a **software framebuffer**. Th
 
 ## Setup
 
-1.  **Library File:** Place the `GC9A01.py`  file on your device (e.g., Unihiker) in a directory where your main script can import it, or install it as a custom library.
+1.  **Library File:** Place the `GC9A01.py` (this library file, e.g., `gc9a01_alpha_blend_mod.py`) file on your device (e.g., Unihiker) in a directory where your main script can import it, or install it as a custom library.
 2.  **Dependencies:** Ensure PinPong and Pillow are installed in your Python environment.
 3.  **Font File:** For text rendering, you'll need a TrueType font file (e.g., `DejaVuSans-Bold.ttf`) accessible by your script.
 
@@ -76,7 +76,7 @@ The library maintains `self.framebuffer` (a Pillow `Image` object) and `self.fb_
 
 ### Standard Drawing Methods
 
-These methods draw onto the software framebuffer first, and then the affected region of the framebuffer is sent to the physical display. This ensures that anti-aliasing performed by Pillow is done against the actual content of the framebuffer.
+These methods draw onto the software framebuffer first, and then the affected region of the framebuffer is sent to the physical display. This ensures that anti-aliasing performed by Pillow is done against the actual content of the framebuffer, leading to smoother graphics.
 
 * **`pixel(x, y, color_rgb565)`**
     Draws a single pixel at `(x,y)` with the given RGB565 color.
@@ -90,6 +90,15 @@ These methods draw onto the software framebuffer first, and then the affected re
     Fills the entire software framebuffer and physical display with the specified RGB565 color.
 * **`circle(x_center, y_center, radius, outline_rgb565=None, fill_rgb565=None, outline_width=1)`**
     Draws a circle. Can be filled, outlined, or both.
+* **`oval(self, xy_bbox, outline_rgb565=None, fill_rgb565=None, outline_width=1)`**
+    Draws an oval (ellipse) defined by a bounding box `xy_bbox = [x0, y0, x1, y1]`. Can be filled, outlined, or both.
+* **`arc(self, xy_bbox, start_angle, end_angle, color_rgb565, width=1)`**
+    Draws an arc (a portion of an ellipse's outline).
+    * `xy_bbox`: Bounding box `[x0, y0, x1, y1]` of the ellipse.
+    * `start_angle`, `end_angle`: Angles in degrees (0 is 3 o'clock, counter-clockwise).
+    * `color_rgb565`: Color of the arc.
+    * `width`: Thickness of the arc.
+    This method draws the arc as an RGBA image and uses `draw_image_rgba_composited` for smooth blending.
 * **`text(x, y, text_string, font_path, font_size, text_color_rgb888, background_color_rgb888=None)`**
     Renders text using a TrueType font.
     * `text_color_rgb888`: Text color as an (R,G,B) tuple.
@@ -138,27 +147,33 @@ The `if __name__ == "__main__":` block in the library file provides a demonstrat
     * **Magenta Rectangle with Text:**
         * A similar process is followed for a semi-transparent magenta rectangle with opaque white text on it. It's drawn using `draw_image_rgba_composited` and correctly blends with the previously drawn elements.
 
-5.  **Drawing Text with an Opaque Background:**
+5.  **Drawing an Arc:**
+    * `display.arc(...)`: Demonstrates drawing an orange arc. This method internally creates an RGBA image of the arc and uses `draw_image_rgba_composited` to ensure smooth blending.
+
+6.  **Drawing an Oval:**
+    * `display.oval(...)`: Shows how to draw a filled and outlined oval. This uses the standard primitive drawing path, updating the software framebuffer.
+
+7.  **Drawing Text with an Opaque Background:**
     * `display.text(...)` is called with a `background_color_rgb888` specified.
-    * This draws yellow text on a gray background. The `text` method handles drawing this opaque block onto the software framebuffer and then updating the hardware.
+    * This draws text on its own specified background. The `text` method handles drawing this opaque block onto the software framebuffer and then updating the hardware.
 
 This example showcases how to use both standard opaque drawing methods and the more advanced `draw_image_rgba_composited` for achieving transparency effects by leveraging the software framebuffer.
 
 ## Notes on Transparency and Performance
 
-* The GC9A01A display controller itself does not provide a hardware command to read from its Graphics RAM (GRAM). Therefore, true alpha blending by reading the physical screen's current state is not possible.
+* The GC9A01A display controller itself does not provide a hardware command to read from its Graphics RAM (GRAM). Therefore, true alpha blending by reading the physical screen's current state is not possible with this controller.
 * This library overcomes this by maintaining a **software framebuffer**. The `draw_image_rgba_composited` method blends against this in-memory representation.
 * While the software framebuffer enables correct alpha blending and high-quality anti-aliased rendering for primitives, there is a performance consideration:
     * Opaque primitives update the software framebuffer (Pillow operation) and then the corresponding region on the hardware.
     * `draw_image_rgba_composited` involves cropping from the framebuffer, alpha compositing (Pillow operation), pasting back to the framebuffer, and then updating the hardware.
 * For very high-speed animations that do not require alpha blending, directly using `draw_image_rgb565` (if you manage the buffer yourself and don't need the software framebuffer's state) might be faster but bypasses the benefits of the software framebuffer.
 
-## How to Draw Transparent Primitives (e.g., Anti-aliased Line)
+## How to Draw Transparent Primitives (e.g., Anti-aliased Line or Arc)
 
-If you need a primitive like a line or circle to be drawn with smooth (anti-aliased) edges and blend correctly with a complex background (not just a solid color fill of the primitive itself):
+If you need a primitive like a line, arc, or an unfilled circle/oval outline to be drawn with smooth (anti-aliased) edges and blend correctly with a complex background:
 
-1.  **Create a small Pillow `Image` in "RGBA" mode.** Make its background fully transparent (e.g., `(0,0,0,0)`).
-2.  **Draw your primitive** (line, circle outline, etc.) onto this RGBA image using `ImageDraw`. Use the desired color and an alpha value of 255 (fully opaque for the primitive itself, but the anti-aliased edges will have varying alpha values against the transparent image background).
-3.  **Call `display.draw_image_rgba_composited(x, y, your_rgba_primitive_image)`**. This will correctly blend your anti-aliased primitive onto the current content of the software framebuffer.
+1.  **Create a small Pillow `Image` in "RGBA" mode.** Make its background fully transparent (e.g., `(0,0,0,0)`). The size of this image should be the bounding box of your primitive plus a small padding (e.g., 2 pixels) to capture anti-aliased edges.
+2.  **Draw your primitive** (line, arc, outline of a shape, etc.) onto this RGBA image using `ImageDraw`. Use the desired color and an alpha value of 255 (fully opaque for the primitive itself, but the anti-aliased edges will have varying alpha values against the transparent image background).
+3.  **Call `display.draw_image_rgba_composited(x_bbox, y_bbox, your_rgba_primitive_image)`**. This will correctly blend your anti-aliased primitive onto the current content of the software framebuffer. The `x_bbox, y_bbox` are the top-left coordinates of where this temporary RGBA image should be placed on the screen.
 
-This technique is demonstrated in the `unihiker_cat_drawing_v2.py` script (not part of this library file, but a good usage example).
+The library's built-in `arc()` method already uses this technique internally. For other primitives where this level of control is needed, you can follow this pattern in your own code.
